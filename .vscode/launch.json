@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "msedge",
+            "name": "https://codesandbox.io/p/live/6bea2be1-a5ad-4e74-9835-faabe19b8075",
+            "request": "launch",
+            "url": "https://codesandbox.io/p/live/6bea2be1-a5ad-4e74-9835-faabe19b8075"
+        }
+    ]
+}
