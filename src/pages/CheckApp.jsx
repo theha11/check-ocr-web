@@ -5,7 +5,6 @@ import { Button, GhostButton } from "../components/ui/Buttons.jsx";
 import { Toggle } from "../components/ui/Toggle.jsx";
 import { fmtDate } from "../lib/format.js";
 import { emptyFields } from "../lib/constants.js";
-import { abaChecksumOk, wordsToNumberDemo } from "../lib/micr.js";
 
 // Fallback nếu môi trường không có crypto.randomUUID
 const uid =
@@ -21,33 +20,33 @@ export function CheckApp({ history, setHistory }) {
   const [fields, setFields] = useState(emptyFields);
   const [loadingExtract, setLoadingExtract] = useState(false);
 
-  // NEW: bật để cho phép lưu dù checksum routing sai
-  const [skipRouting, setSkipRouting] = useState(false);
-
-  const routingOk = useMemo(
-    () => abaChecksumOk(fields.routing_number),
-    [fields.routing_number]
+  // Lịch sử chỉ hiển thị các mục đã lưu (có tên người rút/payee hoặc có thumbnail)
+  const visibleHistory = useMemo(
+    () =>
+      history.filter(
+        (h) =>
+          (h.fields?.payer_name && h.fields.payer_name.trim()) ||
+          (h.fields?.payee && h.fields.payee.trim()) ||
+          !!h.thumb
+      ),
+    [history]
   );
-  const amountMatch = useMemo(() => {
-    const parsed = wordsToNumberDemo(fields.amount_words);
-    if (parsed === "") return true;
-    const an = parseFloat(String(fields.amount_numeric || "").replace(/,/g, ""));
-    return Math.abs((an || 0) - parsed) < 0.01;
-  }, [fields.amount_words, fields.amount_numeric]);
 
   function handleFiles(fileList) {
     const file = fileList?.[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (e) => {
       setImageSrc(e.target.result);
       setStage("review");
+
+      // Giả lập trích xuất (thay bằng API thật của bạn)
       setLoadingExtract(true);
-      // Demo dữ liệu giả lập — thay bằng gọi API thật
       setTimeout(() => {
         const demo = {
           bank_name: "JP Morgan Chase & Co.",
-          routing_number: "983356001", // cố tình checksum sai như ảnh mẫu
+          routing_number: "983356001",
           account_number: "7741488526",
           check_number: "5688562",
           date: "2024-06-26",
@@ -66,15 +65,7 @@ export function CheckApp({ history, setHistory }) {
     };
     reader.readAsDataURL(file);
 
-    const item = {
-      id: uid(),
-      name: file.name,
-      size: file.size,
-      ts: Date.now(),
-      thumb: null,
-      fields: emptyFields,
-    };
-    setHistory((h) => [item, ...h].slice(0, 50));
+    // ❌ Không thêm mục “nháp” vào lịch sử tại đây
   }
 
   function onDrop(e) {
@@ -101,16 +92,6 @@ export function CheckApp({ history, setHistory }) {
     setHistory((h) => [entry, ...h]);
   }
 
-  // Quan trọng: cho phép lưu nếu routing hợp lệ HOẶC đã bật skipRouting
-  const allRequiredOk =
-    fields.routing_number &&
-    (routingOk || skipRouting) &&
-    fields.account_number &&
-    fields.check_number &&
-    fields.amount_numeric &&
-    fields.payee &&
-    imageSrc;
-
   return (
     <div className="max-w-7xl mx-auto flex gap-6 px-4 py-6">
       {/* Left Sidebar: Upload History */}
@@ -118,14 +99,18 @@ export function CheckApp({ history, setHistory }) {
         <Card>
           <CardHeader
             title="Lịch sử tra cứu"
-            right={<span className="text-xs text-slate-500">{history.length}</span>}
+            right={
+              <span className="text-xs text-slate-500">
+                {visibleHistory.length}
+              </span>
+            }
           />
           <CardBody className="p-0">
-            {history.length === 0 ? (
+            {visibleHistory.length === 0 ? (
               <div className="p-4 text-sm text-slate-500">Chưa có mục nào.</div>
             ) : (
               <ul className="divide-y">
-                {history.map((h) => (
+                {visibleHistory.map((h) => (
                   <li
                     key={h.id}
                     className="p-3 hover:bg-slate-50 cursor-pointer"
@@ -370,11 +355,6 @@ export function CheckApp({ history, setHistory }) {
                       }
                       placeholder="Five Thousand, Nine Hundred And Ninety-Two Dollars and 90/100"
                     />
-                    {!amountMatch && (
-                      <div className="text-xs text-rose-600 mt-1">
-                        Cảnh báo: Số tiền chữ không khớp số.
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -394,33 +374,6 @@ export function CheckApp({ history, setHistory }) {
                       }
                       placeholder="9 digits"
                     />
-                    {fields.routing_number && (
-                      <div
-                        className={`text-xs mt-1 ${
-                          routingOk ? "text-emerald-600" : "text-rose-600"
-                        }`}
-                      >
-                        {routingOk
-                          ? "Checksum hợp lệ"
-                          : "Checksum không hợp lệ"}
-                      </div>
-                    )}
-                    {/* NEW: công tắc bỏ qua checksum */}
-                    <div className="mt-1 flex items-center gap-2">
-                      <input
-                        id="skipRouting"
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={skipRouting}
-                        onChange={(e) => setSkipRouting(e.target.checked)}
-                      />
-                      <label
-                        htmlFor="skipRouting"
-                        className="text-xs text-slate-600"
-                      >
-                        Bỏ qua kiểm tra checksum
-                      </label>
-                    </div>
                   </div>
                   <div>
                     <Label>Account number</Label>
@@ -469,19 +422,16 @@ export function CheckApp({ history, setHistory }) {
               {/* Footer */}
               <div className="px-4 py-3 border-t bg-white rounded-b-2xl flex items-center justify-between">
                 <div className="text-xs text-slate-500">
-                  Các trường bắt buộc: Routing, Account, Check #, Payee, Amount
+                  Nhấn ✅ để lưu lại mục này
                 </div>
                 <div className="flex items-center gap-3">
                   <GhostButton onClick={() => setFields(emptyFields)}>
                     Xóa
                   </GhostButton>
                   <Button
-                    disabled={!allRequiredOk}
                     onClick={() => {
                       saveToHistory();
-                      alert(
-                        "✅ Đã xác nhận & lưu JSON (demo). Hãy nối API thật ở phần backend."
-                      );
+                      alert("✅ Đã lưu (demo). Hãy nối API thật ở backend.");
                     }}
                     aria-label="Xác nhận & Lưu"
                     title="Xác nhận & Lưu"
