@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { Card, CardHeader, CardBody } from "../components/ui/Card.jsx";
 import { Label, Input } from "../components/ui/Inputs.jsx";
 import { Button, GhostButton } from "../components/ui/Buttons.jsx";
 import { Toggle } from "../components/ui/Toggle.jsx";
 import { fmtDate } from "../lib/format.js";
 import { emptyFields } from "../lib/constants.js";
+import { getHistory, addHistory, updateHistory, deleteHistory } from "../lib/api.js";
 
 // Fallback nếu môi trường không có crypto.randomUUID
 const uid =
@@ -12,7 +13,21 @@ const uid =
     ? () => crypto.randomUUID()
     : () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-export function CheckApp({ history, setHistory }) {
+export function CheckApp({ history, setHistory, user }) {
+  // Load history from API on mount
+  useEffect(() => {
+    if (user) {
+      console.log('Loading history for user:', user.username);
+      getHistory()
+        .then(data => {
+          console.log('Loaded history:', data);
+          setHistory(data);
+        })
+        .catch(err => {
+          console.error('Failed to load history:', err);
+        });
+    }
+  }, [user]);
   const fileInputRef = useRef(null);
   const [stage, setStage] = useState("idle"); // idle | review
   const [dragOver, setDragOver] = useState(false);
@@ -20,30 +35,36 @@ export function CheckApp({ history, setHistory }) {
   const [fields, setFields] = useState(emptyFields);
   const [loadingExtract, setLoadingExtract] = useState(false);
 
-  // Lịch sử chỉ hiển thị các mục đã lưu (có tên người rút/payee hoặc có thumbnail)
+  // Sắp xếp lịch sử theo thời gian mới nhất
   const visibleHistory = useMemo(
-    () =>
-      history.filter(
-        (h) =>
-          (h.fields?.payer_name && h.fields.payer_name.trim()) ||
-          (h.fields?.payee && h.fields.payee.trim()) ||
-          !!h.thumb
-      ),
+    () => [...history].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
     [history]
   );
 
   function handleFiles(fileList) {
+    if (!user) {
+      alert('Please sign in to process checks');
+      return;
+    }
+
     const file = fileList?.[0];
     if (!file) return;
 
+    // Check file type
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload an image file');
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
-      setImageSrc(e.target.result);
+      const imageSrc = e.target.result;
+      setImageSrc(imageSrc);
       setStage("review");
 
       // Giả lập trích xuất (thay bằng API thật của bạn)
       setLoadingExtract(true);
-      setTimeout(() => {
+      setTimeout(async () => {
         const demo = {
           bank_name: "JP Morgan Chase & Co.",
           routing_number: "983356001",
@@ -60,8 +81,24 @@ export function CheckApp({ history, setHistory }) {
           signature_present: true,
         };
         setFields(demo);
+        
+        // Save to history with image
+        try {
+          const historyItem = await addHistory(demo.payer_name, { 
+            fields: demo,
+            image: imageSrc // Lưu ảnh vào history
+          });
+          setHistory(prev => [historyItem, ...prev]);
+        } catch (err) {
+          console.error('Failed to save history:', err);
+        }
+        
         setLoadingExtract(false);
       }, 800);
+    };
+    reader.onerror = () => {
+      alert('Error reading file');
+      setLoadingExtract(false);
     };
     reader.readAsDataURL(file);
 
@@ -79,17 +116,33 @@ export function CheckApp({ history, setHistory }) {
     e.target.value = "";
   }
 
-  function saveToHistory() {
-    const entry = {
-      id: uid(),
-      name:
-        (fields?.payer_name && fields.payer_name.trim()) ||
-        "(Chưa có tên người rút)",
-      ts: Date.now(),
-      thumb: imageSrc,
-      fields,
-    };
-    setHistory((h) => [entry, ...h]);
+  async function saveToHistory() {
+    if (!user) {
+      alert('Please sign in to save history');
+      return;
+    }
+
+    // Tạo nội dung hiển thị từ tên người rút hoặc người nhận
+    const content = (fields?.payer_name && fields.payer_name.trim()) || 
+                   (fields?.payee && fields.payee.trim()) ||
+                   "Chưa có tên người rút";
+    
+    try {
+      // Lưu vào API với đầy đủ thông tin
+      const historyItem = await addHistory(content, {
+        fields: fields,
+        image: imageSrc
+      });
+      
+      // Cập nhật state với dữ liệu mới
+      setHistory((prev) => [historyItem, ...prev]);
+      
+      // Thông báo thành công
+      alert("✅ Đã lưu thành công");
+    } catch (err) {
+      console.error('Failed to save history:', err);
+      alert('Không thể lưu. Vui lòng thử lại.');
+    }
   }
 
   return (
@@ -116,16 +169,19 @@ export function CheckApp({ history, setHistory }) {
                     className="p-3 hover:bg-slate-50 cursor-pointer"
                     onClick={() => {
                       setStage("review");
-                      setFields(h.fields || emptyFields);
-                      setImageSrc(h.thumb || imageSrc);
+                      // Sử dụng fields từ meta
+                      setFields(h.meta?.fields || emptyFields);
+                      // Sử dụng ảnh từ meta
+                      setImageSrc(h.meta?.image || null);
                     }}
                   >
                     <div className="flex items-center gap-3">
                       <div className="h-10 w-14 bg-slate-200 rounded-md overflow-hidden flex items-center justify-center">
-                        {h.thumb ? (
+                        {h.meta?.image ? (
                           <img
-                            src={h.thumb}
+                            src={h.meta.image}
                             className="object-cover h-full w-full"
+                            alt="Check thumbnail"
                           />
                         ) : (
                           <svg
@@ -145,16 +201,71 @@ export function CheckApp({ history, setHistory }) {
                           </svg>
                         )}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium truncate">
-                          {(h.fields?.payer_name &&
-                            h.fields.payer_name.trim()) ||
-                            h.name ||
+                          {(h.meta?.fields?.payer_name &&
+                            h.meta.fields.payer_name.trim()) ||
+                            h.content ||
                             "Chưa có tên người rút"}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {fmtDate(h.ts)}
+                          {fmtDate(h.created_at)}
                         </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newContent = prompt("Nhập nội dung mới:", h.content);
+                            if (newContent != null) {
+                              updateHistory(h.id, newContent, h.meta)
+                                .then(() => {
+                                  setHistory(prev => prev.map(item => 
+                                    item.id === h.id 
+                                      ? { ...item, content: newContent }
+                                      : item
+                                  ));
+                                })
+                                .catch(err => {
+                                  console.error('Failed to update history:', err);
+                                  alert('Không thể cập nhật. Vui lòng thử lại.');
+                                });
+                            }
+                          }}
+                          className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                          title="Sửa"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24">
+                            <path
+                              fill="currentColor"
+                              d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+                            />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm("Bạn có chắc muốn xóa mục này không?")) {
+                              deleteHistory(h.id)
+                                .then(() => {
+                                  setHistory(prev => prev.filter(item => item.id !== h.id));
+                                })
+                                .catch(err => {
+                                  console.error('Failed to delete history:', err);
+                                  alert('Không thể xóa. Vui lòng thử lại.');
+                                });
+                            }
+                          }}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded"
+                          title="Xóa"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24">
+                            <path
+                              fill="currentColor"
+                              d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                            />
+                          </svg>
+                        </button>
                       </div>
                     </div>
                   </li>
