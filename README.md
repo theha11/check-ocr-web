@@ -4,8 +4,37 @@
 
 ## Yêu cầu hệ thống
 
-- Node.js (phiên bản 14.x trở lên)
-- PNPM (có thể cài đặt thông qua npm install -g pnpm)
+### 1. Cài đặt Node.js
+- Truy cập https://nodejs.org
+- Tải và cài đặt Node.js phiên bản LTS (phiên bản 14.x trở lên)
+- Kiểm tra cài đặt bằng lệnh:
+  ```bash
+  node --version
+  npm --version
+  ```
+
+### 2. Cài đặt PNPM
+Có nhiều cách để cài đặt PNPM:
+
+#### Cách 1: Cài đặt thông qua npm (Windows, macOS, Linux)
+```bash
+npm install -g pnpm
+```
+
+#### Cách 2: Cài đặt thông qua PowerShell (Windows)
+```powershell
+iwr https://get.pnpm.io/install.ps1 -useb | iex
+```
+
+#### Cách 3: Cài đặt thông qua curl (macOS, Linux)
+```bash
+curl -fsSL https://get.pnpm.io/install.sh | sh -
+```
+
+Kiểm tra cài đặt PNPM:
+```bash
+pnpm --version
+```
 
 ## Các bước cài đặt
 
